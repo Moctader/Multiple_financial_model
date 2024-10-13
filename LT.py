@@ -24,8 +24,9 @@ class IngestionService:
         df = pd.DataFrame(rows) 
         return df
 
+# Data Preparation
 ingestion_service = IngestionService()
-df = ingestion_service.get_data(symbol='AAPL', ascending=True, limit=2000)
+df = ingestion_service.get_data(symbol='AAPL', ascending=True, limit=20000)
 
 # Extract features and target
 features = df[['open', 'high', 'low', 'volume']]
@@ -71,21 +72,22 @@ test_dataset = FinancialDataset(X_test_tensor, y_test_tensor)
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-# Instantiate the model and move it to the appropriate device
+# Model Definition
 model = Model()
-model = model.to(model.device)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = model.to(device)
 
 # Define loss and optimizer
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.01)
 
 # Training loop
-num_epochs = 10
+num_epochs = 20
 for epoch in range(num_epochs):
     model.train()
     for batch_features, batch_target in train_loader:
-        batch_features = batch_features.unsqueeze(-1).to(model.device)  # Add channel dimension
-        batch_target = batch_target.unsqueeze(-1).to(model.device)  # Add channel dimension
+        batch_features = batch_features.unsqueeze(-1).to(device)  # Add channel dimension
+        batch_target = batch_target.unsqueeze(-1).to(device)  # Add channel dimension
 
         # Forward pass
         outputs = model(batch_features)
@@ -98,13 +100,28 @@ for epoch in range(num_epochs):
 
     print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
 
+    # Validation loop
+    model.eval()
+    val_losses = []
+    with torch.no_grad():
+        for batch_features, batch_target in test_loader:
+            batch_features = batch_features.unsqueeze(-1).to(device)
+            batch_target = batch_target.unsqueeze(-1).to(device)
+
+            outputs = model(batch_features)
+            loss = criterion(outputs.squeeze(), batch_target)
+            val_losses.append(loss.item())
+
+        avg_val_loss = np.mean(val_losses)
+        print(f'Validation Loss: {avg_val_loss:.4f}')
+
 # Test and plot predictions
 model.eval()
 X_batch, y_batch = next(iter(test_loader))
 
 # Reshape the batch to include the channel dimension
-X_batch = X_batch.unsqueeze(-1).float().to(model.device)
-y_batch = y_batch.unsqueeze(-1).to(model.device)
+X_batch = X_batch.unsqueeze(-1).float().to(device)
+y_batch = y_batch.unsqueeze(-1).to(device)
 
 with torch.no_grad():
     y_pred_scaled = model(X_batch)
@@ -124,3 +141,10 @@ print(f"Mean Squared Error (MSE): {mse_error:.4f}")
 print(f"Root Mean Squared Error (RMSE): {rmse_error:.4f}")
 print(f"R-squared (R²): {r2_error:.4f}")
 
+# Plotting
+plt.figure(figsize=(12, 6))
+plt.plot(y_test_actual, label='Actual')
+plt.plot(y_pred, label='Predicted')
+plt.legend()
+plt.title('Actual vs Predicted Values')
+plt.show()
