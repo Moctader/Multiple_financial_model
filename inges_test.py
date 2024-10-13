@@ -1,3 +1,7 @@
+'''
+To train a PyTorch model using an sklearn pipeline, you need to create a custom
+wrapper that makes the PyTorch model compatible with sklearn's API. 
+'''
 import torch
 import torch.nn as nn
 import torch.optim as optim
