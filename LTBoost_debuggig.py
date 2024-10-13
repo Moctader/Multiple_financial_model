@@ -5,45 +5,102 @@ import torch.optim as optim
 import pandas as pd
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
+from sklearn.preprocessing import StandardScaler
 
-# Sample data
-data = {
-    'timestamp': ['2019-01-02 00:25:00', '2019-01-02 00:26:00', '2019-01-02 00:27:00', '2019-01-02 00:28:00', '2019-01-02 00:29:00'],
-    'open': [1.14573, 1.14565, 1.14567, 1.14577, 1.14575],
-    'high': [1.14574, 1.14571, 1.14581, 1.14579, 1.14581],
-    'low': [1.14565, 1.14564, 1.14562, 1.14572, 1.14573],
-    'close': [1.14565, 1.14568, 1.14578, 1.14575, 1.14579],
-    'volume': [128, 97, 88, 52, 71]
-}
+# Define experimental variables
+SEQ_LEN = 336
+LABEL_LEN = 18
+PRED_LEN = 96
+ENC_IN = 7
+INDIVIDUAL = False
+LR = 0.005
+BATCH_SIZE = 32
+TREE_LR = 0.01
+TREE_LOSS = 'MSE'
+TREE_LB = 7
+TREE_ITER = 200
+NUM_LEAVES = 7
+PSMOOTH = 0
+LB_DATA = 'N'
+NUM_JOBS = -1
+USE_GPU = False
+DEVICE = 'cuda' if torch.cuda.is_available() and USE_GPU else 'cpu'
+NORMALIZE = True
+USE_REVIN = True
+DS_NAME = 'path_to_your_dataset.csv'  # Update this with the actual path to your dataset
 
-df = pd.DataFrame(data)
+# Define Dataset
+class Dataset_Custom(Dataset):
+    def __init__(self, flag='train', data_path=DS_NAME, scale=True, train_only=False):
+        # size [seq_len, label_len, pred_len]
+        self.seq_len = SEQ_LEN
+        self.label_len = LABEL_LEN
+        self.pred_len = PRED_LEN
+        assert flag in ['train', 'test', 'val']
+        type_map = {'train': 0, 'val': 1, 'test': 2}
+        self.set_type = type_map[flag]
 
-# Extract features and target
-features = df[['open', 'high', 'low', 'volume']].values
-target = df['close'].values
+        self.scale = scale
+        self.train_only = train_only
 
-# Convert to tensors
-features_tensor = torch.tensor(features, dtype=torch.float32)
-target_tensor = torch.tensor(target, dtype=torch.float32)
+        self.data_path = data_path
+        self.__read_data__()
 
-# Create a Dataset
-class FinancialDataset(Dataset):
-    def __init__(self, features, target):
-        self.features = features
-        self.target = target
+    def __read_data__(self):
+        self.scaler = StandardScaler()
+        df_raw = pd.read_csv(self.data_path)
+
+        border1s = [0, 12 * 30 * 24 - self.seq_len, 12 * 30 * 24 + 4 * 30 * 24 - self.seq_len]
+        border2s = [12 * 30 * 24, 12 * 30 * 24 + 4 * 30 * 24, 12 * 30 * 24 + 8 * 30 * 24]
+        border1 = border1s[self.set_type]
+        border2 = border2s[self.set_type]
+
+        cols_data = df_raw.columns[1:]
+        df_data = df_raw[cols_data]
+
+        if self.scale:
+            train_data = df_data[border1s[0]:border2s[0]]
+            self.scaler.fit(train_data.values)
+            data = self.scaler.transform(df_data.values)
+        else:
+            data = df_data.values
+
+        self.data_x = data[border1:border2]
+        self.data_y = data[border1:border2]
+
+    def __getitem__(self, index):
+        s_begin = index
+        s_end = s_begin + self.seq_len
+        r_begin = s_end - self.label_len
+        r_end = r_begin + self.label_len + self.pred_len
+
+        seq_x = self.data_x[s_begin:s_end]
+        seq_y = self.data_y[r_begin:r_end]
+
+        return seq_x, seq_y
 
     def __len__(self):
-        return len(self.features)
+        return len(self.data_x) - self.seq_len - self.pred_len + 1
 
-    def __getitem__(self, idx):
-        return self.features[idx], self.target[idx]
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)
 
-dataset = FinancialDataset(features_tensor, target_tensor)
+def validate(model, vali_loader, criterion):
+    errs = []
+    with torch.no_grad():
+        for batch_x, batch_y in vali_loader:
+            batch_x = batch_x.float().to(DEVICE)
+            batch_y = batch_y[:, -PRED_LEN:, :].float().to(DEVICE)
+            outputs = model(batch_x)
+            outputs = outputs[:, -PRED_LEN:, :]
+            pred = outputs.detach().cpu()
+            true = batch_y.detach().cpu()
+            loss = criterion(pred, true)
+            errs.extend(np.abs(pred - true))
 
-# Create a DataLoader
-dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
+    return np.mean(np.array(errs) ** 2), np.mean(errs)
 
-# Define the RevIN class
+# RevIN class definition
 class RevIN(nn.Module):
     def __init__(self, num_features: int, eps=1e-5, affine=True, subtract_last=False):
         super(RevIN, self).__init__()
@@ -98,18 +155,18 @@ class RevIN(nn.Module):
             x = x + self.mean
         return x
 
-# Define the Model class
+# Model definition
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
-        self.seq_len = 4  # Number of features
-        self.pred_len = 1  # Predicting one value (close price)
+        self.seq_len = SEQ_LEN  # Number of features
+        self.pred_len = PRED_LEN  # Predicting one value (close price)
         self.channels = 1  # Single channel
-        self.individual = False
+        self.individual = INDIVIDUAL
 
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.normalize = True
-        self.use_RevIN = True
+        self.device = DEVICE
+        self.normalize = NORMALIZE
+        self.use_RevIN = USE_REVIN
 
         if self.individual:
             self.Linear = nn.ModuleList()
@@ -145,53 +202,92 @@ class Model(nn.Module):
 
         return output
 
-# Instantiate the model and move it to the appropriate device
-model=Model()
-model=model.to(model.device)
-# Define loss and optimizer
-criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.01)
+if __name__ == '__main__':
+    # Load Model and Data
+    ltboost = Model().to(DEVICE)
 
-# Training loop
-num_epochs = 10
-for epoch in range(num_epochs):
-    for batch_features, batch_target in dataloader:
-        batch_features = batch_features.unsqueeze(-1).to(model.device)  # Add channel dimension
-        batch_target = batch_target.unsqueeze(-1).to(model.device)  # Add channel dimension
+    train_loader = DataLoader(
+        Dataset_Custom(flag='train'),
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=1,
+        drop_last=True)
 
-        # Forward pass
-        outputs = model(batch_features)
-        loss = criterion(outputs.squeeze(), batch_target)
+    vali_loader = DataLoader(
+        Dataset_Custom(flag='val'),
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=1,
+        drop_last=True)
 
-        # Backward pass and optimization
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    test_loader = DataLoader(
+        Dataset_Custom(flag='test'),
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=1,
+        drop_last=False)
 
-    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+    # Debug prints
+    print(f"Length of training dataset: {len(train_loader.dataset)}")
+    print(f"Batch size: {BATCH_SIZE}")
+    print(f"Number of batches in train_loader: {len(train_loader)}")
 
-# Test and plot predictions
-X_batch, y_batch = next(iter(dataloader))
+    # Check if train_loader is empty
+    if len(train_loader) == 0:
+        raise ValueError("The training dataset is empty. Please check the dataset and try again.")
 
-# Reshape the batch to include the channel dimension
-X_batch = X_batch.unsqueeze(-1).float().to(model.device)
-y_batch = y_batch.unsqueeze(-1).to(model.device)
+    # Loss and optimizer
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(ltboost.parameters(), lr=LR)
 
-with torch.no_grad():
-    lin_preds = model(X_batch)
-    lt_preds = model(X_batch)
+    # Training loop
+    num_epochs = 10
+    for epoch in range(num_epochs):
+        epoch_loss = 0
+        for batch_features, batch_target in train_loader:
+            batch_features = batch_features.unsqueeze(-1).to(DEVICE)  # Add channel dimension
+            batch_target = batch_target.unsqueeze(-1).to(DEVICE)  # Add channel dimension
 
-# Fix ground truth concatenation to ensure both tensors have same dimensions
-gt = np.concatenate((X_batch[0, :, -1].cpu().numpy(), y_batch[0].cpu().numpy()), axis=0)
+            # Forward pass
+            outputs = ltboost(batch_features)
+            loss = criterion(outputs.squeeze(), batch_target)
 
-# Plotting
-plt.figure()
-plt.plot(list(range(-model.seq_len, model.pred_len)), gt, label='GroundTruth', linewidth=1.5)
-plt.plot(list(range(model.pred_len)), lin_preds[0, :, -1].cpu().numpy(), label='Linear part', color='orange', linewidth=1)
-plt.plot(list(range(model.pred_len)), lt_preds[0, :, -1].cpu().numpy(), label='LTBoost', color='red', linewidth=1)
-plt.axvline(x=0, color="k")
-plt.xlabel("Timestep")
-plt.ylabel("Value")
-plt.title('Sample prediction')
-plt.legend()
-plt.show()
+            # Backward pass and optimization
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+
+        avg_epoch_loss = epoch_loss / len(train_loader)
+        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {avg_epoch_loss:.4f}')
+
+        # Validation
+        val_loss, val_err = validate(ltboost, vali_loader, criterion)
+        print(f'Validation Loss: {val_loss:.4f}, Validation Error: {val_err:.4f}')
+
+    # Visualization and prediction
+    X_batch, y_batch = next(iter(test_loader))
+
+    # Get predictions using the model
+    with torch.no_grad():
+        lin_preds = ltboost(X_batch.unsqueeze(-1).float().to(DEVICE))  # Use the model for predictions
+    lt_preds = ltboost(X_batch.unsqueeze(-1).float().to(DEVICE))  # LTBoost model predictions
+
+    # Plot results
+    SEQ_LEN = 4
+    PRED_LEN = 1
+
+    # Ground truth concatenation: Adjust indexing to match 2D tensors
+    gt = np.concatenate((X_batch[0, :].cpu().numpy(), np.expand_dims(y_batch[0].cpu().numpy(), axis=0)), axis=0)
+
+    plt.figure()
+    plt.plot(list(range(-SEQ_LEN, PRED_LEN)), gt, label='GroundTruth', linewidth=1.5)
+    plt.plot(list(range(PRED_LEN)), lin_preds[0, :, -1].cpu().numpy(), label='Linear part', color='orange', linewidth=1)
+    plt.plot(list(range(PRED_LEN)), lt_preds[0, :, -1].cpu().numpy(), label='LTBoost', color='red', linewidth=1)
+    plt.axvline(x=0, color="k")
+    plt.xlabel("Timestep")
+    plt.ylabel("Value")
+    plt.title('Sample prediction')
+    plt.legend()
+    plt.show()
