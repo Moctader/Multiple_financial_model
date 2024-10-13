@@ -1,7 +1,9 @@
-import pandas as pd
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import pandas as pd
+import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 
 # Sample data
@@ -143,10 +145,9 @@ class Model(nn.Module):
 
         return output
 
-# Correct instantiation of the Model class
+# Instantiate the model and move it to the appropriate device
 model=Model()
-model = model.to(model.device)
-
+model=model.to(model.device)
 # Define loss and optimizer
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.01)
@@ -168,3 +169,29 @@ for epoch in range(num_epochs):
         optimizer.step()
 
     print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+# Test and plot predictions
+X_batch, y_batch = next(iter(dataloader))
+
+# Reshape the batch to include the channel dimension
+X_batch = X_batch.unsqueeze(-1).float().to(model.device)
+y_batch = y_batch.unsqueeze(-1).to(model.device)
+
+with torch.no_grad():
+    lin_preds = model(X_batch)
+    lt_preds = model(X_batch)
+
+# Fix ground truth concatenation to ensure both tensors have same dimensions
+gt = np.concatenate((X_batch[0, :, -1].cpu().numpy(), y_batch[0].cpu().numpy()), axis=0)
+
+# Plotting
+plt.figure()
+plt.plot(list(range(-model.seq_len, model.pred_len)), gt, label='GroundTruth', linewidth=1.5)
+plt.plot(list(range(model.pred_len)), lin_preds[0, :, -1].cpu().numpy(), label='Linear part', color='orange', linewidth=1)
+plt.plot(list(range(model.pred_len)), lt_preds[0, :, -1].cpu().numpy(), label='LTBoost', color='red', linewidth=1)
+plt.axvline(x=0, color="k")
+plt.xlabel("Timestep")
+plt.ylabel("Value")
+plt.title('Sample prediction')
+plt.legend()
+plt.show()
