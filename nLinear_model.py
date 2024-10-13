@@ -10,6 +10,7 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from funcs import create_cassandra_instance
 from LTBoost.layers.RevIN import RevIN
+import matplotlib.pyplot as plt
 
 class FeatureEngineeringTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, features):
@@ -202,9 +203,9 @@ class StockPipeline:
         
         model = Model(seq_len, pred_len, enc_in, individual, use_revin)
         criterion = torch.nn.MSELoss()
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
+        optimizer = optim.Adam(model.parameters(), lr=0.9)
         
-        pytorch_model = PyTorchModelWrapper(model=model, criterion=criterion, optimizer=optimizer, epochs=10, batch_size=32, device='cpu')
+        pytorch_model = PyTorchModelWrapper(model=model, criterion=criterion, optimizer=optimizer, epochs=50, batch_size=16, device='cpu')
         
         pipeline = Pipeline([
             ('scaler', StandardScaler()),
@@ -232,18 +233,48 @@ class StockPipeline:
         mae = mean_absolute_error(y_test_flat, predictions_flat)
         mse = mean_squared_error(y_test_flat, predictions_flat)
         r2 = r2_score(y_test_flat, predictions_flat)
-        return {'mae': mae, 'mse': mse, 'r2': r2}
+        return {'mae': mae, 'mse': mse, 'r2': r2}, predictions_flat
+
+    # Method to plot the data
+    def plot_data(self):
+        plt.figure(figsize=(14, 7))
+        plt.plot(self.df.index, self.df['close'], label='Close Price')
+        # if 'log_return' in self.df.columns:
+        #     plt.plot(self.df.index, self.df['log_return'], label='Log Return')
+        # if 'volatility' in self.df.columns:
+        #     plt.plot(self.df.index, self.df['volatility'], label='Volatility')
+        # plt.xlabel('Date')
+        # plt.ylabel('Value')
+        # plt.title('Stock Data')
+        # plt.legend()
+        #plt.show()
+
+    # Method to plot the predictions
+    def plot_predictions(self, X_train, y_train, X_test, y_test, predictions):
+        plt.figure(figsize=(14, 7))
+        plt.plot(X_train.index, y_train, label='Train Data')
+        plt.plot(X_test.index, y_test, label='Test Data')
+        plt.plot(X_test.index[:len(predictions)], predictions, label='Predictions')
+        plt.xlabel('Date')
+        plt.ylabel('Close Price')
+        plt.title('Train, Test and Predictions')
+        plt.legend()
+        plt.show()
 
     def run_pipeline(self):
         self.load_data()
         self.apply_feature_engineering()
+        self.plot_data()  # Plot the data for inspection
         X_train, X_test, y_train, y_test = self.split_data()
         pipeline = self.train_model(X_train, y_train)
-        metrics = self.evaluate_model(pipeline, X_test, y_test)
+        metrics, predictions = self.evaluate_model(pipeline, X_test, y_test)
         print(metrics)
+        self.plot_predictions(X_train, y_train, X_test, y_test, predictions)  # Plot the predictions
+        return metrics
 
 def run_pipeline(ingestion_service):
-    row_sizes = [500]
+    row_sizes = [5000]  # Add more dataset sizes for comparison
+    results = []
 
     for num_rows in row_sizes:
         run_params = {
@@ -272,7 +303,13 @@ def run_pipeline(ingestion_service):
         print(f"Running stock prediction pipeline for dataset size: {num_rows}")
         
         pipeline = StockPipeline(run_params, ingestion_service)
-        pipeline.run_pipeline()
+        metrics = pipeline.run_pipeline()
+        results.append((num_rows, metrics))
+
+    # Print comparison results
+    for num_rows, metrics in results:
+        print(f"Dataset size: {num_rows}")
+        print(f"Metrics: {metrics}")
 
 ingestion_service = IngestionService()
 run_pipeline(ingestion_service)
