@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
-from LTBoost import Model
+from main.LTBoost import Model
 
 from funcs import create_cassandra_instance
 
@@ -79,7 +79,7 @@ model = model.to(device)
 
 # Define loss and optimizer
 criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.01)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # Training loop
 num_epochs = 20
