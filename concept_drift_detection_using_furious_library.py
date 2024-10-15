@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.datasets import load_breast_cancer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -7,10 +6,11 @@ from sklearn.preprocessing import StandardScaler
 from frouros.detectors.concept_drift import DDM, DDMConfig
 from frouros.metrics import PrequentialError
 import pandas as pd
+import matplotlib.pyplot as plt
 
 np.random.seed(seed=31)
 
-
+# Load and preprocess the data
 data = pd.read_csv('EODHD_EURUSD_HISTORICAL_2019_2024_1min.csv')
 data = data[['close']]
 data = np.log(data / data.shift(1))
@@ -26,7 +26,7 @@ X = data[['close']].values
 y = data['target'].values
 
 # Split train (70%) and test (30%)
-X_train, X_test, y_train, y_test= train_test_split(X, y, train_size=0.7, random_state=31)
+X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=0.7, random_state=31)
 
 # Define and fit model
 pipeline = Pipeline(
@@ -45,12 +45,12 @@ config = DDMConfig(
 )
 detector = DDM(config=config)
 
-
-
 # Metric to compute accuracy
 metric = PrequentialError(alpha=1.0) 
+
 def stream_test(X_test, y_test, y, metric, detector):
     """Simulate data stream over X_test and y_test. y is the true label."""
+    drift_points = []
     drift_flag = False
     for i, (X, y) in enumerate(zip(X_test, y_test)):
         y_pred = pipeline.predict(X.reshape(1, -1))
@@ -60,14 +60,16 @@ def stream_test(X_test, y_test, y, metric, detector):
         status = detector.status
         if status["drift"] and not drift_flag:
             drift_flag = True
+            drift_points.append(i)
             print(f"Concept drift detected at step {i}. Accuracy: {1 - metric_error:.4f}")
     if not drift_flag:
         print("No concept drift detected")
     print(f"Final accuracy: {1 - metric_error:.4f}\n")
+    return drift_points
 
 # Simulate data stream (assuming test label available after each prediction)
 # No concept drift is expected to occur
-stream_test(
+drift_points = stream_test(
     X_test=X_test,
     y_test=y_test,
     y=y,
@@ -91,7 +93,7 @@ metric.reset()
 
 # Simulate data stream (assuming test label available after each prediction)
 # Concept drift is expected to occur because of the label modification
-stream_test(
+drift_points = stream_test(
     X_test=X_test,
     y_test=y_test,
     y=y,
@@ -100,3 +102,13 @@ stream_test(
 )
 # >> Concept drift detected at step 142. Accuracy: 0.9510
 # >> Final accuracy: 0.8480
+
+# Plot the results
+plt.figure(figsize=(12, 6))
+plt.plot(np.arange(len(y_test)), y_test, label='y_test', marker='.')
+plt.scatter(drift_points, y_test[drift_points], color='red', label='Drift Points', zorder=5)
+plt.xlabel('Index')
+plt.ylabel('Target')
+plt.title('Concept Drift Detection')
+plt.legend()
+plt.show()
