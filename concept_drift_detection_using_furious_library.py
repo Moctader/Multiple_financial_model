@@ -4,18 +4,20 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-
 from frouros.detectors.concept_drift import DDM, DDMConfig
 from frouros.metrics import PrequentialError
 import pandas as pd
 
 np.random.seed(seed=31)
-# Load the new dataset
+
+
 data = pd.read_csv('EODHD_EURUSD_HISTORICAL_2019_2024_1min.csv')
 data = data[['close']]
-
-# Create a target variable for demonstration purposes
-# Here, we create a binary target based on whether the close price increased or decreased
+data = np.log(data / data.shift(1))
+data = data.dropna()
+scaler = StandardScaler()
+scaled_result = scaler.fit_transform(data.values.reshape(-1, 1))
+data['close'] = pd.Series(scaled_result.flatten())
 data['target'] = (data['close'].diff() > 0).astype(int).shift(-1).dropna()
 data = data.dropna()
 
@@ -24,12 +26,7 @@ X = data[['close']].values
 y = data['target'].values
 
 # Split train (70%) and test (30%)
-(
-    X_train,
-    X_test,
-    y_train,
-    y_test,
-) = train_test_split(X, y, train_size=0.7, random_state=31)
+X_train, X_test, y_train, y_test= train_test_split(X, y, train_size=0.7, random_state=31)
 
 # Define and fit model
 pipeline = Pipeline(
@@ -44,13 +41,14 @@ pipeline.fit(X=X_train, y=y_train)
 config = DDMConfig(
     warning_level=2.0,
     drift_level=3.0,
-    min_num_instances=25,  # minimum number of instances before checking for concept drift
+    min_num_instances=25,  
 )
 detector = DDM(config=config)
 
-# Metric to compute accuracy
-metric = PrequentialError(alpha=1.0)  # alpha=1.0 is equivalent to normal accuracy
 
+
+# Metric to compute accuracy
+metric = PrequentialError(alpha=1.0) 
 def stream_test(X_test, y_test, y, metric, detector):
     """Simulate data stream over X_test and y_test. y is the true label."""
     drift_flag = False
