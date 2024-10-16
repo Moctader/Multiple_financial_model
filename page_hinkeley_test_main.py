@@ -142,20 +142,15 @@ plt.tight_layout()
 #plt.show()
 
 
-
-
+############################################################################################################
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from frouros.detectors.concept_drift import PageHinkley
-import seaborn as sns
-from scipy.stats import wasserstein_distance
-
-# Assuming consolidated_reference_data_log_return and current_data_log_return are already defined
+from frouros.detectors.concept_drift import CUSUM
 
 # Introduce a detectable drift in the current data
-drift_value = 3.9  
+drift_value = 5.0  # Increase the magnitude of the drift
 current_data_log_return_with_drift = current_data_log_return.copy()
 current_data_log_return_with_drift[int(len(current_data_log_return) / 2):] += drift_value
 
@@ -165,7 +160,9 @@ stream = np.concatenate((consolidated_reference_data_log_return, current_data_lo
 print(len(consolidated_reference_data_log_return))
 print(len(current_data_log_return_with_drift))
 
-detector = PageHinkley()
+# CUSUM Detector Setup
+detector = CUSUM()
+
 drift_points = []
 
 for i, value in enumerate(stream):
@@ -173,6 +170,95 @@ for i, value in enumerate(stream):
     if detector.drift:
         drift_points.append(i)
         print(f"Change detected at step {i}")
+        break
+
+# Plot the stream data and drift points
+plt.figure(figsize=(18, 6))
+plt.plot(stream, linestyle='None', marker='.', label='Stream Data')
+plt.scatter(drift_points, [stream[i] for i in drift_points], color='red', label='Drift Point', zorder=5)
+plt.xlabel('Index')
+plt.ylabel('Value')
+plt.title('Stream Data with Drift Points')
+plt.legend()
+plt.show()
+
+############################################################################################################
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from frouros.detectors.concept_drift import PageHinkley, PageHinkleyConfig
+
+# Adjust the sensitivity parameters
+config = PageHinkleyConfig()
+config.min_instances = 30
+config.delta = 0.005  # Lower delta to increase sensitivity
+config.lambda_ = 70   # Lower lambda to increase sensitivity
+config.alpha = 1 - 0.0001
+
+detector = PageHinkley(config=config)
+
+# Introduce a detectable negative drift in the current data
+drift_value = 5.0  # Increase the magnitude of the negative drift
+current_data_log_return_with_drift = current_data_log_return.copy()
+current_data_log_return_with_drift[int(len(current_data_log_return) / 3):] += drift_value
+
+# Concatenate the reference and current data with drift
+stream = np.concatenate((consolidated_reference_data_log_return, current_data_log_return_with_drift))
+
+print(len(consolidated_reference_data_log_return))
+print(len(current_data_log_return_with_drift))
+
+drift_points = []
+
+for i, value in enumerate(stream):
+    _ = detector.update(value=value)
+    if detector.drift:
+        drift_points.append(i)
+        print(f"Change detected at step {i}")
+
+# Plot the stream data and drift points
+plt.figure(figsize=(18, 6))
+plt.plot(stream, linestyle='None', marker='.', label='Stream Data')
+plt.scatter(drift_points, [stream[i] for i in drift_points], color='red', label='Drift Point', zorder=5)
+plt.xlabel('Index')
+plt.ylabel('Value')
+plt.title('Stream Data with Drift Points')
+plt.legend()
+plt.show()
+
+
+############################################################################################################
+
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from frouros.detectors.concept_drift import GeometricMovingAverage, GeometricMovingAverageConfig
+
+# GeometricMovingAverage Detector Setup
+config_gma = GeometricMovingAverageConfig(lambda_=0.3)
+detector = GeometricMovingAverage(config=config_gma)
+
+# Introduce a detectable negative drift in the current data
+drift_value = 5.0  # Increase the magnitude of the negative drift
+current_data_log_return_with_drift = current_data_log_return.copy()
+current_data_log_return_with_drift[int(len(current_data_log_return) / 4):] += drift_value
+
+# Concatenate the reference and current data with drift
+stream = np.concatenate((consolidated_reference_data_log_return, current_data_log_return_with_drift))
+
+print(len(consolidated_reference_data_log_return))
+print(len(current_data_log_return_with_drift))
+
+drift_points = []
+
+for i, value in enumerate(stream):
+    _ = detector.update(value=value)
+    if detector.drift:
+        drift_points.append(i)
+        print(f"Change detected at step {i}")
+        break
 
 # Plot the stream data and drift points
 plt.figure(figsize=(18, 6))
